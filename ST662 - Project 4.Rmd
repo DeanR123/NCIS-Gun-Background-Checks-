@@ -1,0 +1,397 @@
+---
+title: "Fire Arms Background Checks"
+author: "Brian Thomas Webb, Dean Rickaby, Jake Meehan, Manasi Anant Tondulkar"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+editor_options:
+  chunk_output_type: console
+always_allow_html: true
+fontsize: 10pt
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+### Introduction
+This report seeks to explore the rate of change in total firearm background checks over time and how they vary across states in America. Using R, we will perform exploratory data analysis on the FBI’s National Instant Criminal Background Check System ("NICS") dataset. The NICS background check verifies that the prospective buyer of a firearm does not have a criminal record or isn't otherwise ineligible to purchase or own a firearm.  The analysis will focus in on the total number of background checks performed from November 1998 – March 2021. We will also be diving in deeper to analyse different gun transactions, firearm categories and exploring permit and permit-recheck levels. We aim to uncover insightful results from the dataset.  
+
+### Methods
+Our first step was to clean the data and identify *NA’s* or *missing values*. Once identified, ‘NA’ values were removed. We applied a subset function to assort the dataset into three areas of study: **gun type, total background checks and permits**. We performed exploratory analysis before analysing each subset to find any correlation, obvious trends and interesting insights.
+
+***Gun Types***
+
+Our primary focus was on the *long guns*, *handguns* and *'other'* categories of guns. We used a barchart, line graph,  table and time-series animation to explore the background checks for gun type overall, temporal change in gun types and gun categories by state.
+
+***Total Background Checks*** 
+
+We investigated the change in total background checks across all the years and months in the dataset using a plotly histogram. We subsequently partitioned the total background checks by year and by month. We used a time series analysis package called ‘zoo’ to illustrate any trends or seasonality in the data. For further analysis, we calculated the rate of change in total background checks. 
+
+***Permits***
+
+We visualised the total number of permits issued by state using a bar chart. We plotted a temporal permits vs permits recheck for the top 5 states using a line graph. This augmented graph provides a clear picture for changes in permit and permit-rechecks across time
+
+### Results
+```{r}
+data <- read.csv("nics-firearm-background-checks.csv",stringsAsFactors = FALSE)
+
+clean <- data[!(is.na(data$permit) & is.na(data$permit_recheck) & is.na(data$handgun) & is.na(data$long_gun) & is.na(data$other)),]
+clean[is.na(clean)] <- 0
+```
+
+
+```{r message = FALSE, warning = FALSE}
+library(tidyverse)
+library(cowplot)
+library(GADMTools)
+library(tmap)
+library(gifski)
+library(sf)
+library(ggplot2)
+library(gganimate)
+library(sp)
+library(flexdashboard)
+library(highcharter)
+library(gganimate)
+library(tibble)
+library(stringr)
+library(gridExtra)
+library(shiny)
+library(magick)
+library(zoo)
+library(ggplot2)
+library(GGally)
+library(reshape2)
+library(sparklyr)
+library(radiant.data)
+library(statebins)
+library(viridis)
+library(maps)
+library(mapproj)
+library(lubridate)
+library(ggtext)
+library(formattable)
+library(cowplot)
+library(gridExtra)
+
+
+```
+
+
+```{r message = FALSE, warning = FALSE}
+clean$month1 <- clean$month
+clean$date <- as.Date(paste(clean$month,"-01",sep=""))
+clean <- separate(clean, "month", c("Year", "Month"), sep = "-")
+```
+
+```{r message = FALSE, warning = FALSE}
+gun_types <- subset(clean, select=c(Year,Month, state, handgun, long_gun, other,date))
+gun_types$handgun1 <- clean$prepawn_handgun + clean$private_sale_handgun + clean$redemption_handgun + clean$rentals_handgun + clean$return_to_seller_handgun + clean$returned_handgun
+
+gun_types$long_gun1 <- clean$prepawn_long_gun + clean$private_sale_long_gun + clean$redemption_long_gun + clean$rentals_long_gun + clean$return_to_seller_long_gun + clean$returned_long_gun
+
+gun_types$other1 <- clean$prepawn_other + clean$private_sale_other + clean$redemption_other  + clean$return_to_seller_other + clean$returned_other
+
+gun_types$handgun <- gun_types$handgun + gun_types$handgun1
+gun_types$long_gun <- gun_types$long_gun + gun_types$long_gun1
+gun_types$other <- gun_types$other + gun_types$other1
+
+gun_types <- subset(gun_types, select=c(Year,Month,state,handgun,long_gun,other,date))
+gun_types <- melt(gun_types,id=c("Year","Month","state","date"))
+gun_types$Year <- as.numeric(gun_types$Year)
+gun_types$Month <- as.numeric(gun_types$Month)
+```
+
+#### Gun Types 
+
+The firearms are divided into 3 categories: handgun, long gun and other. We are interested in analyzing the number of background checks for these categories of firearms over the dataset timeframe.
+<br>
+```{r message = FALSE, warning = FALSE,fig.width=11, fig.height=4}
+#total handgun long other
+require(gridExtra)
+agg_total <- aggregate(gun_types$value, by=list(type=gun_types$variable), FUN=sum)
+plot1 <- ggplot(data = agg_total,mapping = aes(x = type, y = x,color=type)) + geom_bar(stat = "identity",position="dodge",width = 0.4)+ geom_text(aes(label = paste("#", x, sep="")),size = 3, position = position_dodge(width=0.9) ,vjust = -0.5,color="white") + ylab("Background checks")+xlab("Type of gun")+theme_dark()
+
+#type by year
+agg <- aggregate(gun_types$value, by=list(type=gun_types$variable,year=gun_types$Year), FUN=sum)
+agg <- filter(agg,year!=2021 & year!=1998)
+agg<-agg %>% 
+     group_by(type) %>% 
+     arrange(type, year) %>% 
+     mutate(rate = 100 * (x - lag(x))/lag(x)) %>%
+     ungroup()
+agg$rate <- as.integer(agg$rate)
+agg[is.na(agg)]<-0
+plot2 <- ggplot(data = agg,mapping = aes(x = year, y = x, fill= type)) + geom_bar(stat = "identity",position="dodge",width = 0.8) + geom_text(aes(label = ifelse(rate<100 & (rate>35 | rate<(-35)),paste(ifelse(rate>0,"+",""), rate,"%", sep=""),"")),size = 3, position = position_dodge(width=0.9) ,vjust = -0.5,color="white")+ ylab("Background checks")+xlab("Year")+ theme(legend.title = element_blank())+theme_dark()
+plot_grid(plot1, plot2, labels = "AUTO")
+
+```
+<br>
+
+The above graph (A) shows the total number of background checks for different categories of firearm. We observe that over 124 million long gun background checks have been undertaken across the USA from Nov 1998 to Feb 2021. The number of background checks for 'other' firearms are low when compared to those for handgun and long gun. Checks for long gun are almost 30 times greater than 'other' and 14% higher than handgun.<br>
+
+Even though the checks for long guns are higher in total, when we break down the analysis by year (shown in graph B), long gun seems to have a consistency in background checks, whereas handgun shows sustained growth from 2003.<br>
+
+In 2016 we observe a sudden 77% increase in background checks for 'other' categories of gun. We can also see significant increase in checks in 2020 in all 3 categories. Background checks for handguns surged by 69% in 2020 to over 1.2 million checks. This was an interesting insight to us so we explored further by animating the handgun observations in the "lower 48 states".<br>
+
+The tmap animation (gunmap.gif) visualises the number of background checks that were completed over space and time for the handgun category. As shown in the earlier bar chart, it was clear to us that handgun background checks were on the rise from 2003. By 2014, background checks for handguns had overtaken checks for long guns. There was a spike in 2016 coinciding with the controversial presidential campaign. Gun purchase tends to increase in periods of societal uncertainty (source Pierre, J.M., 2019). In 2020 we saw a 'triple whammy' of the Corona Virus pandemic, racial unrest and another controversial presidential election. Combined, these were likely factors for the massive spike in NICS background checks for handguns in 2020. 
+
+The animation highlights the 2016 and 2020 spikes over space and time and visually highlights the rise in states including California, Ohio, Tennessee and in particular Pennsylvania, Florida and Texas in later years.
+<br>
+
+As we have number of background checks for each state in US as well, we are also interested to explore the relation between different states and the 3 categories of gun.  
+
+<br>
+
+```{r message = FALSE, warning = FALSE,fig.width=9, fig.height=4}
+
+hand_total <- agg_total[agg_total$type=='handgun',]$x
+long_gun_total <- agg_total[agg_total$type=='long_gun',]$x
+other_total <- agg_total[agg_total$type=='other',]$x
+agg<-aggregate(gun_types$value,by=list(State=gun_types$state,Type=gun_types$variable),FUN=sum)
+agg<-agg %>% mutate(Contribution = as.integer( ifelse(Type=='handgun',((x/hand_total)*100),ifelse(Type=='long_gun',((x/long_gun_total)*100),((x/other_total)*100)))))
+agg <- agg %>% rename(Background_checks = x)
+agg$Contribution <- paste(agg$Contribution, "%",sep="")
+f1 <- formattable(head(agg[order(agg$Background_checks,decreasing = TRUE),],10))
+
+trans <- subset(clean, select=-c(multiple,admin,permit,permit_recheck,totals,handgun,long_gun,other,date,month1))
+trans <- melt(trans,id=c("Year","Month","state"))
+trans <- aggregate(trans$value, by=list(State=trans$state,Transaction=trans$variable), FUN=sum)
+trans <- trans %>% rename(Background_checks = x)
+f2 <- formattable(head(trans[order(trans$Background_checks,decreasing = TRUE),],10))
+plot_grid(tableGrob(f1), tableGrob(f2), labels = "AUTO")
+
+```
+<br>
+
+Table A above shows the top 10 states for total number of background checks. Texas is at the top of the list with over 10.3 million background checks for long guns followed closely by Pennsylvania. Texas also beats other states in checks for handguns (10.0 million) followed by Florida with a difference of 11%. Even though the number for Texas looks enormous, the contribution to the total long gun check count is only 8.2% and for handgun it is 9.2%.
+<br>
+
+We also have different types of transactions for which the FBI requires a background check to be performed. Redemption background checks are `requested by an officially-licensed Federal Firearms Licensee (FFL) on prospective firearm transferees attempting to regain possession of a firearm after pledging or pawning a firearm as security at a pawn shop. Looking at Table B above, redemption for handgun and long gun has the highest count of checks across all the states with Texas again being at the top of the list for both handgun (1.13 million) and for long gun (1.10 million). North Carolina follows with a 56% differential in long gun redemption (5 million). So, the highest background checks are for redemption, whereas the least checks are for rentals transaction type for handguns with only 485 counts. <br>
+
+#### Total Background Checks
+
+The total backgrounds check plot shows a clear upward trend and an element of seasonality in the data. It is likely the causes of seasonality are a result of presidential elections, mass shootings, and the fear of emerging restrictive legislation. The spike in total background checks for the state of North Carolina in 2014 was a result of an increase in concealed-carry gun permits. This spike is likely the aftermath of Obama’s gun policy and the SandyHook Elementary School Shooting(Skinner, 2019).
+
+
+```{r message = FALSE, warning = FALSE, fig.height=3, fig.width=11}
+D1 <- clean %>%
+  ggplot( aes(x=month1, y=totals)) +
+    geom_line()+ ylab("Total gun checks ") + theme(axis.text.x = element_blank()) +xlab("Date") + ggtitle("Total Background Checks (1998-2021)")
+D1 <- ggplotly(D1)
+D1
+```
+
+<br>
+The graph is broken down by year and month to allow for a magnified examination of the seasonality in the data. It is clear from the graph that total background checks increase in the winter months. Perhaps the shorter days and longer nights alter our behavior, thoughts and actions. The winter could possibly have an effect on our psychology and sense of security? Further investigation would be required to back up this thesis. A more understandable reason for the increase in background checks in winter is due to discounted guns on sale during Black Friday and winter sales. The FBI have stated that Black Friday and winter sales drastically increase background checks as more people purchase discounted guns (Budryk, 2020). 
+<br>
+
+```{r message = FALSE, warning = FALSE,fig.width=11, fig.height=3}
+
+## Calculating total number of firearm background checks by year
+gun_year_total <-clean %>% select(Year,totals)%>% group_by(Year)%>%summarise(Totals=sum(totals))
+
+
+## Plotting total number of firearm background checks by year 
+D2 <- gun_year_total %>% ggplot() + geom_bar(aes(x=Year, y=Totals,fill=Year,), stat = "identity")+ ylab("Total Gun Checks By Year") + theme(axis.text.x=element_blank()) + ggtitle("Total Background Checks By Year")
+
+## Calculating total number of firearm background checks by month 
+gun_month_total <-clean  %>% select(Month,totals)%>% group_by(Month)%>%summarise(Month=sum(totals))
+
+gun_month_total$Month_Name <- c("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
+gun_month_total$Month_Name = factor(gun_month_total$Month_Name, levels = month.abb)
+
+## Plotting total number of firearm background checks by month
+D3 <- gun_month_total %>% ggplot() + geom_bar(aes(x=Month_Name, y=Month,fill=Month_Name,), stat = "identity")+ ylab("Total Gun Checks By Month") + xlab("Month") + theme(axis.text.x=element_blank()) + ggtitle("Total Background Checks By Month")
+
+
+plot_grid(D2, D3, labels = "AUTO")
+
+
+```
+<br>
+
+```{r message = FALSE, warning = FALSE, fig.height=3, fig.width=11, echo=FALSE, results="hide"}
+## Calculating total number of firearm background checks by year and month
+
+gun_month_timeseries <-clean  %>% select(month1,totals)%>% group_by(month1)%>%summarise(Totals=sum(totals))
+
+gun_month_timeseries.month1 <- as.Date(as.yearmon(gun_month_timeseries$month1)) #form date object
+gun_month_timeseries.zoo <- zoo(gun_month_timeseries$Totals, order.by = gun_month_timeseries.month1) 
+
+## Plotting total number of firearm background checks by year and month
+z1 <- plot.zoo(gun_month_timeseries.zoo, xlab = "Date", ylab = "Total Checks", col = "mediumblue", lwd = 2) 
+title("Total Number of Firearm Background Checks by Year and Month")
+z1
+## Calculating rate of change 
+#RoC <- 100 * (diff(gun_month_timeseries.zoo) / gun_month_timeseries.zoo)
+
+## Calculating growth factor
+GF <-(diff(gun_month_timeseries.zoo) / gun_month_timeseries.zoo *100 )
+GF
+z2 <- plot.zoo(GF, xlab = "Date", ylab = "Total Checks", col = "green", lwd = 2) 
+title("Rate of Change of Background Checks(%)")
+z2
+
+```
+<br>
+
+The state map below illustrates the states with the most background checks. It it is evident Kentucky, Illinois, Texas and California have the most background checks. The high level of checks in Kentucky is not due to a rich gun culture but appears to be a result of a policy. This policy requires automatic monthly background checks on every holder of concealed-carry permits in Kentucky (Ryan, 2015). Illinois has high background checks because it is a point of contact for the NICS database. As a point of contact state, Federally licensed firearms dealers in the state are required to contact the Illinois Department of State Police(“Giffords Law Centre,” 2021).
+<br>
+```{r message = FALSE, warning = FALSE, fig.width=11}
+
+## Calculating total number of firearm background checks by state 
+gun_state_total <-clean  %>% select(state,totals)%>% group_by(state)%>%summarise(state_total=sum(totals))
+
+## Plotting total number of firearm background checks by state using maps
+
+us_states <- map_data("state")
+
+gun_state_total$region <- tolower(gun_state_total$state)
+us_states_guns <- left_join(us_states, gun_state_total)
+
+p1 <- ggplot(data = us_states_guns,
+            aes(x = long, y = lat,
+                group = group, fill = state_total)) +geom_polygon(color = "gray90", size = 0.1) +
+    coord_map(projection = "albers", lat0 = 39, lat1 = 45) + scale_fill_gradient(low = "white", high = "#45cbc6") +
+        labs(title = "Gun Background Checks") + theme_map() + labs(fill = "Background Checks")
+
+
+##Plotting total number of firearm background checks by state using state bins package
+
+gun_state_total<-gun_state_total%>%filter(state!="Guam" & state!="Mariana Islands")
+ p2 <- statebins(gun_state_total, value_col="state_total",
+          ggplot2_scale_function = viridis::scale_fill_viridis) +
+  labs(title="Gun Background Checks") +
+  theme_statebins("right")
+ p2
+ 
+```
+<br>
+
+```{r message = FALSE, warning = FALSE, error=FALSE, results="hide"}
+## Visualising NICS handgun background checks over space and time using the tmap package
+## tmap_animation creates an animated gif file
+
+directory <- getwd()
+
+# read in the geojson file of US states
+USA <- st_read("gz_2010_us_040_00_20m.json")
+
+clean$month1 <- as.Date(as.yearmon(clean$month1))
+
+USA[is.na(USA)] =0
+
+# Create the breaks
+gunbreak = c(seq(0,150000, by = 10000))
+
+# Allocate the state name
+USA$state <- USA$NAME
+
+# Clean the data to remove leave the core states
+clean<-clean%>%filter(state!="Guam" & state!="Mariana Islands" & state!="Puerto Rico" & state!="Virgin Islands" & state!="District of Columbia" & state!="Alaska" & state!="Hawaii")
+
+# Merge by state
+USA2 <- merge(USA, clean[1:1000,], by="state")
+#USA2 <- merge(USA, clean, by="state")
+
+# Create the animation
+gunmap<- tm_shape(USA2) +
+# originally looked at total background checks but skewed Illinois permit_rechecks. Handgun data more interesting.
+    #tm_fill("totals",title = "Checks", 
+    tm_fill("handgun",title = "Checks",
+          breaks = gunbreak,
+          style = "fixed",
+          textNA = "No Data",
+          colorNA = "white",
+          palatte = "Blues") +
+  tm_text("NAME", size = 0.50) +
+  tm_borders() +
+  tm_facets(along="month1")+
+  tm_layout("NICS Monthly Background Checks - Category: Handguns ",
+          legend.title.size = 1,
+          legend.text.size = 0.6,
+          legend.position = c("left","bottom"),
+          legend.bg.color = "white",
+          legend.bg.alpha = 1)
+
+#tmap_animation(gunmap, width=600, height=600, delay=20)
+tmap_animation(gunmap, filename="gunmap_short.gif", width=600, height=600, delay=20)
+```
+
+#### Permits
+
+Permits are a necessary item in obtaining and purchasing a firearm in the majority of states. Permits also act as a security measure (an individual needs to go through an initial background check and training course before a permit is granted). While there is not a 1:1 relationship between permit checks and actual gun purchase figures, permits do act as a good indicator for a person's increased willingness to purchase a firearm. In the figure below we see the states ranked in order that have issued the most permits over the 23 year period.
+<br>
+
+```{r message = FALSE, warning = FALSE, fig.height=5, fig.width=11}
+
+# Omiting Inhabited territories and Federal districts to leave just the 50 states 
+
+tpermit<-clean%>%filter(state!="Guam" & state!="Mariana Islands" & state!="Puerto Rico" & state!="Virgin Islands" & state!="District of Columbia")
+
+#total permit plot 
+tpermit %>%
+        ggplot(aes(x=reorder(state, permit), y=permit, fill="red", text=state)) +
+        geom_bar(stat='identity') + coord_flip() +
+        labs(x='', y='total permits', title = " Total Number of Permits issued by State")  +
+        theme(legend.position="none")
+```
+
+<br> 
+
+We can see that Kentucky has issued the highest number of permits, followed by Illinois, California, North Carolina and to round up the top 5 is Texas. Permits once granted are valid for up to five years in these states, conducting permit-rechecks in between this time acts as an added security layer. Analysing these top 5 states further, in the figure below the permit levels were compared with the permit-recheck levels over time in these top five states, to see how vigilant each state's particular security measures are in rechecking individuals’ backgrounds.
+<br>
+
+We see that only Illinois and Kentucky are providing extensive permit-rechecks that are matching or above the rate of permits being issued, Illinois has increased their permit-rechecks dramatically in the last 3 years keeping an extensive updated screening of individuals to crack down on potentially dangerous individuals falling through the net in purchasing firearms.
+<br>
+
+```{r message = FALSE, warning = FALSE, fig.height=3, fig.width=11}
+# Plotted the permit VS permit-rechecks levels over time in each state
+
+clean$month1 <- as.Date(as.yearmon(clean$month1))
+permit_ts <- clean %>%
+           filter(state %in% c("Kentucky", "Illinois", "California", "North Carolina", "Texas"))
+  
+  
+ggplot(permit_ts,aes(x=month1, y=permit_recheck))+geom_line(aes(y= permit_recheck), color="#00FF00")+
+geom_line(aes(y=permit), color="#FF0000")+facet_wrap(~state)+labs(x="Date", y="Permits/Permit Rechecks Total", title = "Top 5 States Issuing Permits: 
+Compairing <span style='color:#FF0000;'>Permits</span> and <span style='color:#00FF00;'>Permit-Rechecks</span>
+    </span> over Time")+ 
+   theme_minimal()+ theme(
+    plot.title = element_markdown(lineheight = 1.1),
+    legend.text = element_markdown(size = 11)
+  )+
+  scale_y_continuous(breaks=c(110000,220000,330000,440000,550000))
+
+
+```
+
+### Discussion 
+
+This report has explored the NICS dataset. We have established the following key insights from our analysis:  
+* Political policy and social events appear to correlate with NICS background check levels for all categories of firearm.  
+* **Gun Types:** Over the NICS dataset timeframe, long gun background checks have been most prominent. However, an upward trend in handgun checks can be seen from 2003 with a high peak in 2020. Handgun checks overtook long gun checks in 2014 and have since been the dominant category for firearm background checks.  
+* **Gun Types:** Texas, Pennsylvania, Florida and California feature highly in the number of background checks for long gun and handguns. Texas has over double the number of redemption checks for long guns and hand guns than has any other state.  
+* **Total Background Checks:** The total backgrounds check plot shows a clear upward trend.  
+* **Total Background Checks:** The **rate of change** plot shows an element of **seasonality** being observed in the dataset.  
+* **Permits:** We see that only Illinois and Kentucky are providing extensive permit-rechecks, with Illinois also dramatically increasing its permit-rechecks in the last 3 years.  
+
+*****
+### References
+
+*Background Check Procedures in Illinois*, n.d. . Giffords. URL   https://giffords.org/lawcenter/state-laws/background-check-procedures-in-illinois/ (accessed 4.24.21).  
+
+Budryk, Z., 2020. *Black Friday gun background checks were fourth-highest one-day total on record: FBI [WWW Document].* TheHill. URL https://thehill.com/blogs/blog-briefing-room/news/528009-black-friday-fourth-largest-one-day-gun-background-checks-FBI (accessed 4.24.21).  
+
+*Illinois Concealed Carry Reciprocity Map & Gun Laws.* (2021, April 15). Retrieved from usconcealedcarry:   https://www.usconcealedcarry.com/resources/ccw_reciprocity_map/il-gun-laws/#permit_info  
+
+Pierre, J.M. *The psychology of guns: risk, fear, and motivated reasoning.* Palgrave Commun 5, 159 (2019). Retrieved from:   https://doi.org/10.1057/s41599-019-0373-z  
+
+Ryan, J., 1AD. *Kentucky’s Background Checks For Gun Owners Stand Out [WWW Document].* 893 WFPL News Louisville. URL https://wfpl.org/kentucky-background-checks-stand-out/ (accessed 4.24.21).  
+
+Pew Research Center, June 2017, *America’s Complex Relationship With Guns*. Retrieved from:   https://www.pewresearch.org/social-trends/2017/06/22/the-demographics-of-gun-ownership/  
+
+Skinner, S., n.d. *Concealed-carry gun permits in NC, Mecklenburg County have tripled since 2010 [WWW Document].* Charlotte Obs. URL https://www.charlotteobserver.com/news/local/article233186401.html (accessed 4.24.21).  
+
+Vinicky, A. (2021, February 15). *Gun Control Advocates Push for Action in Springfield.* Retrieved from wttw: https://news.wttw.com/2021/02/15/gun-control-advocates-push-action-springfield  
